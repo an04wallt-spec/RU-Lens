@@ -4,6 +4,24 @@ import java.util.Locale
 
 object BankDictionary {
     private val phrases = linkedMapOf(
+        "başvurması kolay" to "Легко подать заявку",
+        "kullanması kolay" to "Легко пользоваться",
+        "dijitalin kolayı ziraat’te!" to "Цифровые услуги — проще с Ziraat!",
+        "dijitalin kolayı ziraat'te!" to "Цифровые услуги — проще с Ziraat!",
+        "ziraat bankası müşterileri, internet ve mobil bankacılığa ziraat mobil’den kolayca başvurabiliyor." to "Клиенты Ziraat Bankası могут легко подключить интернет- и мобильный банкинг через Ziraat Mobil.",
+        "ziraat bankası müşterileri, internet ve mobil bankacılığa ziraat mobil'den kolayca başvurabiliyor." to "Клиенты Ziraat Bankası могут легко подключить интернет- и мобильный банкинг через Ziraat Mobil.",
+        "ziraat mobil indir" to "СКАЧАТЬ ZIRAAT MOBİL",
+        "göster" to "ПОКАЗАТЬ",
+        "başvuru" to "Заявка",
+        "başvur" to "Подать заявку",
+        "kolay" to "Легко",
+        "kullanım" to "Использование",
+        "kullanması" to "Пользоваться",
+        "müşterileri" to "Клиенты",
+        "internet" to "Интернет",
+        "mobil bankacılık" to "Мобильный банкинг",
+        "bankacılık" to "Банкинг",
+        "indir" to "Скачать",
         "giriş yap" to "Войти",
         "çıkış yap" to "Выйти",
         "devam et" to "Продолжить",
@@ -139,7 +157,6 @@ object BankDictionary {
         "detaylar" to "Подробности",
         "dekont" to "Квитанция",
         "dekont paylaş" to "Поделиться квитанцией",
-        "indir" to "Скачать",
         "paylaş" to "Поделиться",
         "kopyala" to "Копировать",
         "favoriler" to "Избранное",
@@ -171,9 +188,6 @@ object BankDictionary {
         var result = source
         var hits = 0
 
-        // Replace longer phrases first, then individual banking/UI terms.
-        // This handles labels such as "Hesaplarım ve Kartlarım" instead of
-        // requiring the whole accessibility node to exactly match one key.
         phrases.entries
             .sortedByDescending { it.key.length }
             .forEach { (tr, ru) ->
