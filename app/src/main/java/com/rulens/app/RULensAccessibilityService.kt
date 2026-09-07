@@ -19,6 +19,7 @@ class RULensAccessibilityService : AccessibilityService() {
     private val translationViews = mutableListOf<View>()
     private var statusView: TextView? = null
     private var translated = false
+    private val drawnKeys = mutableSetOf<String>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -115,30 +116,23 @@ class RULensAccessibilityService : AccessibilityService() {
 
         clearTranslations()
         clearStatus()
+        drawnKeys.clear()
 
         val stats = ScanStats()
-        val seenPackages = linkedSetOf<String>()
         var scannedRoots = 0
 
-        val availableWindows = windows
-        for (window in availableWindows) {
+        for (window in windows) {
             val root = window.root ?: continue
             val pkg = root.packageName?.toString().orEmpty()
-
-            // Never scan RU Lens' own overlay/window.
             if (pkg == packageName) continue
-
             scannedRoots++
-            if (pkg.isNotBlank()) seenPackages += pkg
             collect(root, stats)
         }
 
-        // Fallback for devices that do not expose a windows list reliably.
         if (scannedRoots == 0) {
             val root = rootInActiveWindow
             if (root != null && root.packageName?.toString() != packageName) {
                 scannedRoots++
-                root.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { seenPackages += it }
                 collect(root, stats)
             }
         }
@@ -152,33 +146,41 @@ class RULensAccessibilityService : AccessibilityService() {
             scannedRoots > 0 -> "RU Lens: окна доступны ($scannedRoots), но текста Android не отдал"
             else -> "RU Lens: нет доступного окна для чтения"
         }
-
         showStatus(message)
     }
 
     private fun collect(node: AccessibilityNodeInfo, stats: ScanStats) {
-        val candidates = buildList {
-            node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
-            node.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
-                if (!contains(it)) add(it)
-            }
-        }
+        if (!node.isVisibleToUser) return
 
-        if (candidates.isNotEmpty()) {
-            stats.textNodes++
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
 
-            val translatedCandidate = candidates
-                .asSequence()
-                .mapNotNull { source -> BankDictionary.translate(source)?.let { source to it } }
-                .firstOrNull()
+        val validRect = rect.width() > 8 &&
+            rect.height() > 8 &&
+            rect.right > 0 && rect.bottom > 0 &&
+            rect.left < screenW && rect.top < screenH
 
-            if (translatedCandidate != null) {
-                val (_, ru) = translatedCandidate
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
-                if (rect.width() > 8 && rect.height() > 8 && rect.top >= 0) {
-                    showTranslation(rect, ru)
-                    stats.translated++
+        if (validRect) {
+            val visibleText = node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }
+            val fallbackDescription = if (visibleText == null && node.childCount == 0) {
+                node.contentDescription?.toString()?.trim()?.takeIf {
+                    it.isNotBlank() && it.length <= 80 && !it.contains("Bu sayfa", ignoreCase = true)
+                }
+            } else null
+
+            val source = visibleText ?: fallbackDescription
+            if (source != null) {
+                stats.textNodes++
+                val ru = BankDictionary.translate(source)
+                if (ru != null) {
+                    val key = "${rect.left}:${rect.top}:${rect.right}:${rect.bottom}:${ru.lowercase()}"
+                    val tooLarge = rect.width() > screenW * 0.92 || rect.height() > screenH * 0.22
+                    if (!tooLarge && drawnKeys.add(key)) {
+                        showTranslation(rect, ru)
+                        stats.translated++
+                    }
                 }
             }
         }
@@ -191,19 +193,25 @@ class RULensAccessibilityService : AccessibilityService() {
     private fun showTranslation(bounds: Rect, translatedText: String) {
         val density = resources.displayMetrics.density
         val pad = (5 * density).toInt()
+        val screenW = resources.displayMetrics.widthPixels
+
         val tv = TextView(this).apply {
             text = translatedText
             textSize = 13f
             setTextColor(Color.WHITE)
             setPadding(pad, pad / 2, pad, pad / 2)
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
             background = rounded(Color.argb(235, 25, 25, 25), 8f * density)
-            maxLines = 3
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
         }
 
+        val minW = (56 * density).toInt()
         val minH = (28 * density).toInt()
-        val width = bounds.width().coerceAtLeast((70 * density).toInt())
-        val height = bounds.height().coerceAtLeast(minH)
+        val maxW = (screenW * 0.60f).toInt()
+        val width = bounds.width().coerceAtLeast(minW).coerceAtMost(maxW)
+        val height = bounds.height().coerceAtLeast(minH).coerceAtMost((64 * density).toInt())
+
         val lp = WindowManager.LayoutParams(
             width,
             height,
@@ -214,8 +222,8 @@ class RULensAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = bounds.left
-            y = bounds.top
+            x = bounds.left.coerceAtLeast(0).coerceAtMost((screenW - width).coerceAtLeast(0))
+            y = bounds.top.coerceAtLeast(0)
         }
 
         runCatching {
@@ -258,6 +266,7 @@ class RULensAccessibilityService : AccessibilityService() {
     private fun clearTranslations() {
         translationViews.forEach { runCatching { wm.removeView(it) } }
         translationViews.clear()
+        drawnKeys.clear()
     }
 
     private fun clearStatus() {
