@@ -34,9 +34,8 @@ class RULensAccessibilityService : AccessibilityService() {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
-    private val secureOcrBlockedPackages = setOf(
-        "com.ziraat.ziraatmobil"
-    )
+    private val ziraatPackage = "com.ziraat.ziraatmobil"
+    private val secureOcrBlockedPackages = setOf(ziraatPackage)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -141,22 +140,26 @@ class RULensAccessibilityService : AccessibilityService() {
         val stats = ScanStats()
         var scannedRoots = 0
         var foregroundPackage: String? = null
+        var ziraatSeen = false
 
         for (window in windows) {
             val root = window.root ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (pkg == packageName) continue
+            if (pkg == ziraatPackage) ziraatSeen = true
             if (foregroundPackage == null && pkg.isNotBlank()) foregroundPackage = pkg
             scannedRoots++
-            collect(root, stats)
+            collect(root, stats, deepMode = pkg == ziraatPackage)
         }
 
         if (scannedRoots == 0) {
             val root = rootInActiveWindow
             if (root != null && root.packageName?.toString() != packageName) {
-                foregroundPackage = root.packageName?.toString()
+                val pkg = root.packageName?.toString().orEmpty()
+                foregroundPackage = pkg
+                ziraatSeen = pkg == ziraatPackage
                 scannedRoots++
-                collect(root, stats)
+                collect(root, stats, deepMode = ziraatSeen)
             }
         }
 
@@ -167,19 +170,16 @@ class RULensAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (foregroundPackage in secureOcrBlockedPackages) {
+        if (ziraatSeen || foregroundPackage in secureOcrBlockedPackages) {
             bubble?.text = "RU"
             showStatus(
-                if (stats.textNodes > 0) {
-                    "RU Lens: Ziraat Mobil — текст найден, но словарь не дал перевода; OCR отключён для защищённого экрана"
-                } else {
-                    "RU Lens: Ziraat Mobil — приложение не отдаёт текст Android; OCR недоступен из-за защиты экрана"
-                }
+                "Ziraat: узлов ${stats.totalNodes}; text ${stats.textFields}, desc ${stats.descriptionFields}, " +
+                    "hint ${stats.hintFields}, pane ${stats.paneFields}, state ${stats.stateFields}, " +
+                    "tip ${stats.tooltipFields}, extras ${stats.extraFields}. Переводов 0; OCR недоступен."
             )
             return
         }
 
-        // Accessibility gave no usable translation. Fall back to fully local OCR.
         startOcrFallback(stats.textNodes, scannedRoots)
     }
 
@@ -282,44 +282,99 @@ class RULensAccessibilityService : AccessibilityService() {
         showStatus("RU Lens: OCR — $message")
     }
 
-    private fun collect(node: AccessibilityNodeInfo, stats: ScanStats) {
-        if (!node.isVisibleToUser) return
+    private fun collect(node: AccessibilityNodeInfo, stats: ScanStats, deepMode: Boolean) {
+        stats.totalNodes++
+        if (node.isVisibleToUser) stats.visibleNodes++
 
-        val rect = Rect()
-        node.getBoundsInScreen(rect)
-        val screenW = resources.displayMetrics.widthPixels
-        val screenH = resources.displayMetrics.heightPixels
+        val candidates = LinkedHashSet<String>()
 
-        val validRect = rect.width() > 8 &&
-            rect.height() > 8 &&
-            rect.right > 0 && rect.bottom > 0 &&
-            rect.left < screenW && rect.top < screenH
+        node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+            stats.textFields++
+            candidates += it
+        }
 
-        if (validRect) {
-            val visibleText = node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }
-            val fallbackDescription = if (visibleText == null && node.childCount == 0) {
-                node.contentDescription?.toString()?.trim()?.takeIf {
-                    it.isNotBlank() && it.length <= 80 && !it.contains("Bu sayfa", ignoreCase = true)
-                }
-            } else null
+        node.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+            stats.descriptionFields++
+            candidates += it
+        }
 
-            val source = visibleText ?: fallbackDescription
-            if (source != null) {
-                stats.textNodes++
-                val ru = BankDictionary.translate(source)
-                if (ru != null) {
-                    val key = "${rect.left}:${rect.top}:${rect.right}:${rect.bottom}:${ru.lowercase()}"
-                    val tooLarge = rect.width() > screenW * 0.92 || rect.height() > screenH * 0.22
-                    if (!tooLarge && drawnKeys.add(key)) {
-                        showTranslation(rect, ru)
-                        stats.translated++
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            node.hintText?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+                stats.hintFields++
+                candidates += it
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            node.paneTitle?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+                stats.paneFields++
+                candidates += it
+            }
+            node.tooltipText?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+                stats.tooltipFields++
+                candidates += it
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            node.stateDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+                stats.stateFields++
+                candidates += it
+            }
+        }
+
+        if (deepMode) {
+            val extras = node.extras
+            for (key in extras.keySet()) {
+                when (val value = extras.get(key)) {
+                    is CharSequence -> value.toString().trim().takeIf { it.isNotBlank() }?.let {
+                        stats.extraFields++
+                        candidates += it
+                    }
+                    is Array<*> -> value.filterIsInstance<CharSequence>().forEach { item ->
+                        item.toString().trim().takeIf { it.isNotBlank() }?.let {
+                            stats.extraFields++
+                            candidates += it
+                        }
+                    }
+                    is ArrayList<*> -> value.filterIsInstance<CharSequence>().forEach { item ->
+                        item.toString().trim().takeIf { it.isNotBlank() }?.let {
+                            stats.extraFields++
+                            candidates += it
+                        }
                     }
                 }
             }
         }
 
+        if (candidates.isNotEmpty()) {
+            stats.textNodes++
+        }
+
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        val validRect = rect.width() > 8 && rect.height() > 8 &&
+            rect.right > 0 && rect.bottom > 0 && rect.left < screenW && rect.top < screenH
+
+        if (validRect && (deepMode || node.isVisibleToUser)) {
+            val ru = candidates.asSequence()
+                .mapNotNull { source -> BankDictionary.translate(source) }
+                .firstOrNull()
+
+            if (ru != null) {
+                val key = "${rect.left}:${rect.top}:${rect.right}:${rect.bottom}:${ru.lowercase()}"
+                val tooLarge = rect.width() > screenW * 0.92 || rect.height() > screenH * 0.30
+                if (!tooLarge && drawnKeys.add(key)) {
+                    showTranslation(rect, ru)
+                    stats.translated++
+                }
+            }
+        }
+
         for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { child -> collect(child, stats) }
+            node.getChild(i)?.let { child -> collect(child, stats, deepMode) }
         }
     }
 
@@ -373,15 +428,16 @@ class RULensAccessibilityService : AccessibilityService() {
         val density = resources.displayMetrics.density
         val tv = TextView(this).apply {
             text = message
-            textSize = 13f
+            textSize = 12f
             setTextColor(Color.WHITE)
             setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
             gravity = Gravity.CENTER
             background = rounded(Color.argb(240, 45, 45, 45), 10f * density)
+            maxLines = 5
         }
 
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            (resources.displayMetrics.widthPixels * 0.92f).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -395,7 +451,7 @@ class RULensAccessibilityService : AccessibilityService() {
         runCatching {
             wm.addView(tv, lp)
             statusView = tv
-            tv.postDelayed({ clearStatus() }, 4200)
+            tv.postDelayed({ clearStatus() }, 7000)
         }
     }
 
@@ -416,7 +472,16 @@ class RULensAccessibilityService : AccessibilityService() {
     }
 
     private data class ScanStats(
+        var totalNodes: Int = 0,
+        var visibleNodes: Int = 0,
         var textNodes: Int = 0,
+        var textFields: Int = 0,
+        var descriptionFields: Int = 0,
+        var hintFields: Int = 0,
+        var paneFields: Int = 0,
+        var stateFields: Int = 0,
+        var tooltipFields: Int = 0,
+        var extraFields: Int = 0,
         var translated: Int = 0
     )
 }
