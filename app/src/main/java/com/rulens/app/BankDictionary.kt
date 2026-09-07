@@ -164,21 +164,29 @@ object BankDictionary {
     fun translate(raw: String): String? {
         val source = raw.trim().replace(Regex("\\s+"), " ")
         if (source.length < 2) return null
+
         val key = source.lowercase(trLocale)
         phrases[key]?.let { return it }
 
         var result = source
         var hits = 0
+
+        // Replace longer phrases first, then individual banking/UI terms.
+        // This handles labels such as "Hesaplarım ve Kartlarım" instead of
+        // requiring the whole accessibility node to exactly match one key.
         phrases.entries
-            .filter { it.key.contains(' ') }
             .sortedByDescending { it.key.length }
             .forEach { (tr, ru) ->
-                val regex = Regex("(?i)(?<![\\p{L}])${Regex.escape(tr)}(?![\\p{L}])")
+                val regex = Regex(
+                    "(?<![\\p{L}])${Regex.escape(tr)}(?![\\p{L}])",
+                    RegexOption.IGNORE_CASE
+                )
                 if (regex.containsMatchIn(result)) {
                     result = regex.replace(result, ru)
                     hits++
                 }
             }
+
         return if (hits > 0 && result != source) result else null
     }
 }
