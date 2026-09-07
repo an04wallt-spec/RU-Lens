@@ -34,6 +34,10 @@ class RULensAccessibilityService : AccessibilityService() {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
+    private val secureOcrBlockedPackages = setOf(
+        "com.ziraat.ziraatmobil"
+    )
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -136,11 +140,13 @@ class RULensAccessibilityService : AccessibilityService() {
 
         val stats = ScanStats()
         var scannedRoots = 0
+        var foregroundPackage: String? = null
 
         for (window in windows) {
             val root = window.root ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (pkg == packageName) continue
+            if (foregroundPackage == null && pkg.isNotBlank()) foregroundPackage = pkg
             scannedRoots++
             collect(root, stats)
         }
@@ -148,6 +154,7 @@ class RULensAccessibilityService : AccessibilityService() {
         if (scannedRoots == 0) {
             val root = rootInActiveWindow
             if (root != null && root.packageName?.toString() != packageName) {
+                foregroundPackage = root.packageName?.toString()
                 scannedRoots++
                 collect(root, stats)
             }
@@ -157,6 +164,18 @@ class RULensAccessibilityService : AccessibilityService() {
             translated = true
             bubble?.text = "×"
             showStatus("RU Lens: Accessibility — переведено ${stats.translated} фрагм.")
+            return
+        }
+
+        if (foregroundPackage in secureOcrBlockedPackages) {
+            bubble?.text = "RU"
+            showStatus(
+                if (stats.textNodes > 0) {
+                    "RU Lens: Ziraat Mobil — текст найден, но словарь не дал перевода; OCR отключён для защищённого экрана"
+                } else {
+                    "RU Lens: Ziraat Mobil — приложение не отдаёт текст Android; OCR недоступен из-за защиты экрана"
+                }
+            )
             return
         }
 
@@ -180,7 +199,6 @@ class RULensAccessibilityService : AccessibilityService() {
         clearStatus()
         showStatus("RU Lens: Accessibility не помог — запускаю локальный OCR…")
 
-        // Hide our own overlay before the screenshot so OCR does not recognize RU Lens itself.
         bubble?.visibility = View.INVISIBLE
         clearStatus()
 
