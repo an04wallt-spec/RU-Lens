@@ -11,8 +11,27 @@ android {
         applicationId = "com.rulens.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("RU_LENS_KEYSTORE_PATH")
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("RU_LENS_STORE_PASSWORD")
+                keyAlias = System.getenv("RU_LENS_KEY_ALIAS")
+                keyPassword = System.getenv("RU_LENS_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
