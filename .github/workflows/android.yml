@@ -25,15 +25,21 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.RU_LENS_KEYSTORE_B64 }}
         run: |
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/RU-LENS-release.jks"
+          printf '%s' "$KEYSTORE_B64" | tr -d '\r\n\t ' | base64 --decode > "$RUNNER_TEMP/RU-LENS-release.jks"
 
       - name: Build signed release APK
+        shell: bash
         env:
-          RU_LENS_KEYSTORE_PATH: ${{ runner.temp }}/RU-LENS-release.jks
-          RU_LENS_STORE_PASSWORD: ${{ secrets.RU_LENS_STORE_PASSWORD }}
-          RU_LENS_KEY_PASSWORD: ${{ secrets.RU_LENS_KEY_PASSWORD }}
-          RU_LENS_KEY_ALIAS: ${{ secrets.RU_LENS_KEY_ALIAS }}
-        run: gradle assembleRelease
+          RAW_STORE_PASSWORD: ${{ secrets.RU_LENS_STORE_PASSWORD }}
+          RAW_KEY_PASSWORD: ${{ secrets.RU_LENS_KEY_PASSWORD }}
+          RAW_KEY_ALIAS: ${{ secrets.RU_LENS_KEY_ALIAS }}
+        run: |
+          export RU_LENS_KEYSTORE_PATH="$RUNNER_TEMP/RU-LENS-release.jks"
+          export RU_LENS_STORE_PASSWORD="$(printf '%s' "$RAW_STORE_PASSWORD" | tr -d '\r\n')"
+          export RU_LENS_KEY_PASSWORD="$(printf '%s' "$RAW_KEY_PASSWORD" | tr -d '\r\n')"
+          export RU_LENS_KEY_ALIAS="$(printf '%s' "$RAW_KEY_ALIAS" | tr -d '\r\n')"
+          keytool -list -keystore "$RU_LENS_KEYSTORE_PATH" -storepass "$RU_LENS_STORE_PASSWORD" >/dev/null
+          gradle assembleRelease
 
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk RU-LENS.apk
