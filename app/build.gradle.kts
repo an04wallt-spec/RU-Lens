@@ -11,8 +11,8 @@ android {
         applicationId = "com.rulens.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.2.0"
     }
 
     signingConfigs {
@@ -47,4 +47,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // Bundled/offline Latin-script OCR model. No runtime model download is needed.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
