@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import android.widget.Toast
 
 class RULensAccessibilityService : AccessibilityService() {
     private lateinit var wm: WindowManager
@@ -86,7 +87,7 @@ class RULensAccessibilityService : AccessibilityService() {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
                     if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) moved = true
-                    lp.x = startX - dx.toInt() // END gravity: positive x moves left
+                    lp.x = startX - dx.toInt()
                     lp.y = startY + dy.toInt()
                     wm.updateViewLayout(view, lp)
                     true
@@ -112,32 +113,68 @@ class RULensAccessibilityService : AccessibilityService() {
         }
 
         clearTranslations()
-        val root = rootInActiveWindow ?: return
-        collect(root)
+        val root = rootInActiveWindow
+        if (root == null) {
+            Toast.makeText(this, "RU Lens: текст этого экрана недоступен", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val stats = ScanStats()
+        collect(root, stats)
+        root.recycle()
+
         translated = translationViews.isNotEmpty()
         bubble?.text = if (translated) "×" else "RU"
+
+        when {
+            translated -> Toast.makeText(
+                this,
+                "RU Lens: переведено ${stats.translated} фрагм.",
+                Toast.LENGTH_SHORT
+            ).show()
+            stats.textNodes > 0 -> Toast.makeText(
+                this,
+                "RU Lens: текст найден (${stats.textNodes}), совпадений словаря нет",
+                Toast.LENGTH_LONG
+            ).show()
+            else -> Toast.makeText(
+                this,
+                "RU Lens: приложение не отдаёт текст Android",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
-    private fun collect(node: AccessibilityNodeInfo) {
-        val text = listOf(node.text, node.contentDescription)
-            .firstOrNull { !it.isNullOrBlank() }
-            ?.toString()
-            ?.trim()
+    private fun collect(node: AccessibilityNodeInfo, stats: ScanStats) {
+        val candidates = buildList {
+            node.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+            node.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let {
+                if (!contains(it)) add(it)
+            }
+        }
 
-        if (!text.isNullOrBlank()) {
-            val ru = BankDictionary.translate(text)
-            if (!ru.isNullOrBlank() && ru != text) {
+        if (candidates.isNotEmpty()) {
+            stats.textNodes++
+
+            val translatedCandidate = candidates
+                .asSequence()
+                .mapNotNull { source -> BankDictionary.translate(source)?.let { source to it } }
+                .firstOrNull()
+
+            if (translatedCandidate != null) {
+                val (_, ru) = translatedCandidate
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
                 if (rect.width() > 8 && rect.height() > 8 && rect.top >= 0) {
                     showTranslation(rect, ru)
+                    stats.translated++
                 }
             }
         }
 
         for (i in 0 until node.childCount) {
             node.getChild(i)?.let { child ->
-                collect(child)
+                collect(child, stats)
                 child.recycle()
             }
         }
@@ -188,4 +225,9 @@ class RULensAccessibilityService : AccessibilityService() {
         setColor(color)
         cornerRadius = radius
     }
+
+    private data class ScanStats(
+        var textNodes: Int = 0,
+        var translated: Int = 0
+    )
 }
