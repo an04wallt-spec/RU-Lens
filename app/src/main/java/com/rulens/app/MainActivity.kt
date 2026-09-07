@@ -13,6 +13,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        RULensAccessibilityService.requestShow()
+
         val pad = (20 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -40,8 +42,16 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        root.addView(Button(this).apply {
+            text = "Закрыть RU Lens"
+            setOnClickListener {
+                RULensAccessibilityService.requestClose()
+                finishAndRemoveTask()
+            }
+        })
+
         root.addView(TextView(this).apply {
-            text = "После включения службы появится плавающая кнопка RU. Нажатие переводит доступные турецкие надписи на текущем экране."
+            text = "После включения службы появится плавающая кнопка RU. Нажатие переводит доступные турецкие надписи на текущем экране. Кнопка «Закрыть RU Lens» убирает плавающую кнопку и переводы; при следующем запуске приложения RU Lens снова появится без повторной выдачи разрешения."
             textSize = 14f
             gravity = Gravity.CENTER
             setPadding(0, pad, 0, 0)
