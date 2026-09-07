@@ -20,8 +20,22 @@ class RULensAccessibilityService : AccessibilityService() {
     private val translationViews = mutableListOf<View>()
     private var translated = false
 
+    companion object {
+        @Volatile
+        private var instance: RULensAccessibilityService? = null
+
+        fun requestShow() {
+            instance?.showBubble()
+        }
+
+        fun requestClose() {
+            instance?.hideAll()
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         showBubble()
     }
@@ -34,14 +48,13 @@ class RULensAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
-        clearTranslations()
-        bubble?.let { runCatching { wm.removeView(it) } }
-        bubble = null
+        hideAll()
+        if (instance === this) instance = null
         super.onDestroy()
     }
 
     private fun showBubble() {
-        if (bubble != null) return
+        if (!::wm.isInitialized || bubble != null) return
 
         val density = resources.displayMetrics.density
         val size = (56 * density).toInt()
@@ -102,6 +115,13 @@ class RULensAccessibilityService : AccessibilityService() {
 
         bubble = view
         wm.addView(view, lp)
+    }
+
+    private fun hideAll() {
+        clearTranslations()
+        translated = false
+        bubble?.let { runCatching { wm.removeView(it) } }
+        bubble = null
     }
 
     private fun toggleTranslation() {
