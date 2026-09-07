@@ -7,13 +7,18 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        RULensAccessibilityService.requestShow()
+        getSharedPreferences("ru_lens", MODE_PRIVATE)
+            .edit()
+            .putBoolean("paused", false)
+            .apply()
+        sendBroadcast(Intent(RULensAccessibilityService.ACTION_SHOW).setPackage(packageName))
 
         val pad = (20 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
@@ -45,8 +50,13 @@ class MainActivity : AppCompatActivity() {
         root.addView(Button(this).apply {
             text = "Закрыть RU Lens"
             setOnClickListener {
-                RULensAccessibilityService.requestClose()
-                finishAndRemoveTask()
+                getSharedPreferences("ru_lens", MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("paused", true)
+                    .apply()
+                sendBroadcast(Intent(RULensAccessibilityService.ACTION_HIDE).setPackage(packageName))
+                Toast.makeText(this@MainActivity, "RU Lens закрыт", Toast.LENGTH_SHORT).show()
+                root.postDelayed({ finishAndRemoveTask() }, 250)
             }
         })
 
