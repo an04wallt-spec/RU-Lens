@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">RU Lens</string>
+    <string name="accessibility_description">Локальный перевод турецкого интерфейса на русский. Данные не отправляются в интернет.</string>
+</resources>
