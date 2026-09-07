@@ -12,49 +12,36 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
-import android.widget.Toast
 
 class RULensAccessibilityService : AccessibilityService() {
     private lateinit var wm: WindowManager
     private var bubble: TextView? = null
     private val translationViews = mutableListOf<View>()
+    private var statusView: TextView? = null
     private var translated = false
-
-    companion object {
-        @Volatile
-        private var instance: RULensAccessibilityService? = null
-
-        fun requestShow() {
-            instance?.showBubble()
-        }
-
-        fun requestClose() {
-            instance?.hideAll()
-        }
-    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        instance = this
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         showBubble()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Deliberately no continuous capture/storage.
-        // Translation happens only when the user taps RU.
+        // No continuous capture or storage. Translation only on RU tap.
     }
 
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
-        hideAll()
-        if (instance === this) instance = null
+        clearTranslations()
+        clearStatus()
+        bubble?.let { runCatching { wm.removeView(it) } }
+        bubble = null
         super.onDestroy()
     }
 
     private fun showBubble() {
-        if (!::wm.isInitialized || bubble != null) return
+        if (bubble != null) return
 
         val density = resources.displayMetrics.density
         val size = (56 * density).toInt()
@@ -117,52 +104,56 @@ class RULensAccessibilityService : AccessibilityService() {
         wm.addView(view, lp)
     }
 
-    private fun hideAll() {
-        clearTranslations()
-        translated = false
-        bubble?.let { runCatching { wm.removeView(it) } }
-        bubble = null
-    }
-
     private fun toggleTranslation() {
         if (translated) {
             clearTranslations()
+            clearStatus()
             translated = false
             bubble?.text = "RU"
             return
         }
 
         clearTranslations()
-        val root = rootInActiveWindow
-        if (root == null) {
-            Toast.makeText(this, "RU Lens: текст этого экрана недоступен", Toast.LENGTH_SHORT).show()
-            return
-        }
+        clearStatus()
 
         val stats = ScanStats()
-        collect(root, stats)
-        root.recycle()
+        val seenPackages = linkedSetOf<String>()
+        var scannedRoots = 0
+
+        val availableWindows = windows
+        for (window in availableWindows) {
+            val root = window.root ?: continue
+            val pkg = root.packageName?.toString().orEmpty()
+
+            // Never scan RU Lens' own overlay/window.
+            if (pkg == packageName) continue
+
+            scannedRoots++
+            if (pkg.isNotBlank()) seenPackages += pkg
+            collect(root, stats)
+        }
+
+        // Fallback for devices that do not expose a windows list reliably.
+        if (scannedRoots == 0) {
+            val root = rootInActiveWindow
+            if (root != null && root.packageName?.toString() != packageName) {
+                scannedRoots++
+                root.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { seenPackages += it }
+                collect(root, stats)
+            }
+        }
 
         translated = translationViews.isNotEmpty()
         bubble?.text = if (translated) "×" else "RU"
 
-        when {
-            translated -> Toast.makeText(
-                this,
-                "RU Lens: переведено ${stats.translated} фрагм.",
-                Toast.LENGTH_SHORT
-            ).show()
-            stats.textNodes > 0 -> Toast.makeText(
-                this,
-                "RU Lens: текст найден (${stats.textNodes}), совпадений словаря нет",
-                Toast.LENGTH_LONG
-            ).show()
-            else -> Toast.makeText(
-                this,
-                "RU Lens: приложение не отдаёт текст Android",
-                Toast.LENGTH_LONG
-            ).show()
+        val message = when {
+            translated -> "RU Lens: переведено ${stats.translated} фрагм."
+            stats.textNodes > 0 -> "RU Lens: текст найден (${stats.textNodes}), совпадений словаря нет"
+            scannedRoots > 0 -> "RU Lens: окна доступны ($scannedRoots), но текста Android не отдал"
+            else -> "RU Lens: нет доступного окна для чтения"
         }
+
+        showStatus(message)
     }
 
     private fun collect(node: AccessibilityNodeInfo, stats: ScanStats) {
@@ -193,10 +184,7 @@ class RULensAccessibilityService : AccessibilityService() {
         }
 
         for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { child ->
-                collect(child, stats)
-                child.recycle()
-            }
+            node.getChild(i)?.let { child -> collect(child, stats) }
         }
     }
 
@@ -236,9 +224,45 @@ class RULensAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun showStatus(message: String) {
+        clearStatus()
+        val density = resources.displayMetrics.density
+        val tv = TextView(this).apply {
+            text = message
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+            gravity = Gravity.CENTER
+            background = rounded(Color.argb(240, 45, 45, 45), 10f * density)
+        }
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = (70 * density).toInt()
+        }
+
+        runCatching {
+            wm.addView(tv, lp)
+            statusView = tv
+            tv.postDelayed({ clearStatus() }, 3500)
+        }
+    }
+
     private fun clearTranslations() {
         translationViews.forEach { runCatching { wm.removeView(it) } }
         translationViews.clear()
+    }
+
+    private fun clearStatus() {
+        statusView?.let { runCatching { wm.removeView(it) } }
+        statusView = null
     }
 
     private fun rounded(color: Int, radius: Float) = GradientDrawable().apply {
